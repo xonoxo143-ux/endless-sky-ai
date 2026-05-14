@@ -133,7 +133,7 @@ jobs:
   build_windows:
     name: Windows
     needs: changed
-    if: ${{ needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true' }}
+    if: ${{ github.event_name == 'push' && (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true') }}
     runs-on: windows-2025
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -192,7 +192,7 @@ jobs:
   build_windows_32:
     name: Windows (32-bit)
     needs: changed
-    if: ${{ needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true' }}
+    if: ${{ github.event_name == 'push' && (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true') }}
     runs-on: windows-2025
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -244,7 +244,7 @@ jobs:
   build_windows_clang:
     name: Windows Clang
     needs: changed
-    if: ${{ needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true' }}
+    if: ${{ github.event_name == 'push' && (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true') }}
     runs-on: windows-2025
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -293,7 +293,7 @@ jobs:
   build_macos:
     name: MacOS
     needs: changed
-    if: ${{ needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true' }}
+    if: ${{ github.event_name == 'push' && (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true') }}
     runs-on: macos-14
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -343,7 +343,7 @@ jobs:
   build_macos-arm:
     name: MacOS-ARM
     needs: changed
-    if: ${{ needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true' }}
+    if: ${{ github.event_name == 'push' && (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true') }}
     runs-on: macos-14
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -413,7 +413,7 @@ jobs:
   test-parse:
     needs: [changed, build_windows]
     name: Data Files
-    if: ${{ (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.data == 'true' || needs.changed.outputs.integration_tests == 'true' || needs.changed.outputs.ci_config == 'true') && always() }}
+    if: ${{ github.event_name == 'push' && (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.data == 'true' || needs.changed.outputs.integration_tests == 'true' || needs.changed.outputs.ci_config == 'true') && always() }}
     runs-on: windows-2025
     env:
       CONTINUOUS: EndlessSky-win64-continuous.zip
