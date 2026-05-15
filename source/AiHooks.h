@@ -24,19 +24,34 @@ class PlayerInfo;
 
 // Minimal AI Lab hook surface.
 //
-// v0.2 is still intentionally read-only. It exports lightweight player/flagship
-// telemetry as JSON Lines when explicitly enabled from the command line.
+// v0.3 keeps game control inert by default. Telemetry remains read-only, and
+// the control bridge only parses command files and reports validation results.
 class AiHooks {
 public:
 	struct Options {
 		bool telemetry = false;
 		int telemetryEvery = 60;
 		std::string telemetryFile;
+		bool control = false;
+		std::string commandFile;
+	};
+
+	struct CommandResult {
+		bool hasSeq = false;
+		std::int64_t seq = 0;
+		bool accepted = false;
+		bool hasAction = false;
+		std::string action;
+		std::string reason;
 	};
 
 public:
 	static void Configure(const Options &options);
 	static bool TelemetryEnabled();
+	static bool ControlEnabled();
 	static void EmitTelemetry(const PlayerInfo &player, std::uint64_t tick);
 	static void EmitSelfTest();
+	static CommandResult ParseCommandText(const std::string &text);
+	static void PollCommand(const PlayerInfo &player, std::uint64_t tick);
+	static void EmitCommandResult(const CommandResult &result);
 };

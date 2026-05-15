@@ -158,6 +158,8 @@ int main(int argc, char *argv[])
 			if(aiHookOptions.telemetryEvery < 1)
 				aiHookOptions.telemetryEvery = 1;
 		}
+		else if(arg == "--ai-control")
+			aiHookOptions.control = true;
 	}
 	AiHooks::Configure(aiHookOptions);
 	printData = PrintData::IsPrintDataArgument(argv);
@@ -449,8 +451,14 @@ void GameLoop(PlayerInfo &player, TaskQueue &queue, const Conversation &conversa
 			// Tell all the panels to step forward, then draw them.
 			((!isDebugPaused && menuPanels.IsEmpty()) ? gamePanels : menuPanels).StepAll();
 
-			if(AiHooks::TelemetryEnabled())
-				AiHooks::EmitTelemetry(player, ++aiHookTick);
+			if(AiHooks::TelemetryEnabled() || AiHooks::ControlEnabled())
+			{
+				++aiHookTick;
+				if(AiHooks::TelemetryEnabled())
+					AiHooks::EmitTelemetry(player, aiHookTick);
+				if(AiHooks::ControlEnabled())
+					AiHooks::PollCommand(player, aiHookTick);
+			}
 
 			// Caps lock slows the frame rate in debug mode.
 			// Slowing eases in and out over a couple of frames.
@@ -644,6 +652,7 @@ void PrintHelp()
 	cerr << "    --nomute: don't mute the game while running tests." << endl;
 	cerr << "    --ai-telemetry: print AI Lab telemetry as JSON Lines to stdout." << endl;
 	cerr << "    --ai-telemetry-every <frames>: telemetry frame interval, default 60." << endl;
+	cerr << "    --ai-control: enable the experimental AI command file control bridge." << endl;
 	PrintData::Help();
 	cerr << endl;
 	cerr << "Report bugs to: <https://github.com/endless-sky/endless-sky/issues>" << endl;
