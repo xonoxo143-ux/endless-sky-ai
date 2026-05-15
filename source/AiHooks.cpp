@@ -20,6 +20,7 @@ this program. If not, see <https://www.gnu.org/licenses/>.
 #include "Ship.h"
 #include "System.h"
 
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -99,6 +100,13 @@ void AiHooks::Configure(const Options &newOptions)
 	options = newOptions;
 	if(options.telemetryEvery < 1)
 		options.telemetryEvery = 1;
+
+	if(options.telemetryFile.empty())
+	{
+		const char *envTelemetryFile = getenv("ES_AI_TELEMETRY_FILE");
+		if(envTelemetryFile)
+			options.telemetryFile = envTelemetryFile;
+	}
 
 	telemetryFile.reset();
 	if(options.telemetry && !options.telemetryFile.empty())
