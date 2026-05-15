@@ -184,3 +184,17 @@ void AiHooks::EmitTelemetry(const PlayerInfo &player, uint64_t tick)
 	out << "}" << endl;
 	out.flush();
 }
+
+
+
+void AiHooks::EmitSelfTest()
+{
+	ostream &out = TelemetryOutput();
+	out << "{\"type\":\"ai_telemetry_self_test\",";
+	out << "\"telemetry_version\":1,";
+	out << "\"ok\":true,";
+	WriteStringField(out, "phase", "self_test");
+	WriteStringField(out, "message", "AI telemetry output path is available", false);
+	out << "}" << endl;
+	out.flush();
+}
