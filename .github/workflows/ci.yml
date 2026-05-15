@@ -2,39 +2,33 @@ name: CI
 
 on:
   push:
-    # Run for pushes to master, e.g. a PR was merged ...
     branches:
       - master
-    # ... and only when we've possibly changed how the game will function.
     paths:
-    - 'source/**'
-    - 'data/**'
-    - 'images/**'
-    - 'sounds/**'
-    - 'tests/**'
-    - '.github/workflows/**'
-    - '.github/path-filters.yml'
-    - 'steam/**'
-    - 'CMakeLists.txt'
-    - 'CMakePresets.json'
-    - 'overlays/**'
-    - Doxyfile
-    - keys.txt
+      - 'source/**'
+      - 'data/**'
+      - 'images/**'
+      - 'sounds/**'
+      - 'tests/**'
+      - '.github/workflows/**'
+      - '.github/path-filters.yml'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'overlays/**'
+      - keys.txt
   pull_request:
-    # Run for any push to any pull request, if it modifies source code or game text.
-    types: [opened, synchronize]
+    types: [opened, synchronize, reopened]
     paths:
-    - 'source/**'
-    - 'data/**'
-    - 'tests/**'
-    - '.github/workflows/**'
-    - '.github/path-filters.yml'
-    - 'steam/**'
-    - 'CMakeLists.txt'
-    - 'CMakePresets.json'
-    - 'overlays/**'
-    - Doxyfile
-    - keys.txt
+      - 'source/**'
+      - 'data/**'
+      - 'tests/**'
+      - '.github/workflows/**'
+      - '.github/path-filters.yml'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'overlays/**'
+      - keys.txt
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -45,410 +39,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Figure out what changed, so other jobs in this file can conditionally execute.
-  changed:
-    uses: ./.github/workflows/compute-changes.yml
-
-
-  build_ubuntu:
-    name: Ubuntu
-    needs: changed
-    if: ${{ needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.integration_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true' }}
-    runs-on: ubuntu-${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [22.04, 24.04]
-        opengl: [GL, GLES]
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-    - uses: actions/checkout@v5
-      with:
-        show-progress: false
-        fetch-depth: '10'
-    - name: Install development dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends libxmu-dev libxi-dev libgl-dev libglu1-mesa-dev libgles2-mesa-dev libminizip-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libosmesa6 mesa-utils libglvnd-dev x11-utils catch2 libltdl-dev autoconf autoconf-archive automake libtool
-    - name: Disable VM sound card
-      run: |
-        sudo sh -c 'echo "pcm.!default { type plug slave.pcm \"null\" }"  >> /etc/asound.conf'
-    - name: Find cache keys
-      run: |
-        echo 'RESTORE_KEYS<<EOF' > restore_keys.txt
-        git log --pretty=format:'${{ runner.os }}-${{ matrix.os }}-${{ matrix.opengl }}-ci-%H' -n 10 | tail -n+2 >> restore_keys.txt
-        echo -e '\nEOF' >> restore_keys.txt
-        cat restore_keys.txt >> "$GITHUB_ENV"
-        echo "CACHE_HASH=$(git log --no-merges --pretty=format:'%H' -n 1)" >> "$GITHUB_ENV"
-    - name: Setup ccache
-      uses: hendrikmuhs/ccache-action@v1
-      with:
-        key: ${{ runner.os }}-${{ matrix.os }}-${{ matrix.opengl }}-ci-${{ env.CACHE_HASH }}
-        restore-keys: ${{ env.RESTORE_KEYS }}
-        evict-old-files: '2d'
-        append-timestamp: 'false'
-    - name: Adjust version strings
-      run: ./utils/cd_update_versions.sh
-    - name: Setup vcpkg cache
-      uses: TAServers/vcpkg-cache@v3
-      id: vcpkg-cache
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-    - uses: lukka/get-cmake@v4.2.3
-    - uses: lukka/run-vcpkg@v11
-      with:
-        vcpkgGitCommitId: '89dc8be6dbcf18482a5a1bf86a2f4615c939b0fb'
-    - name: Run CMake
-      run: |
-        cmake --preset ${{ matrix.opengl == 'GL' && 'linux-ci' || 'linux-gles-ci' }}
-        cmake --build build --preset ${{ matrix.opengl == 'GL' && 'linux-ci' || 'linux-gles-ci' }}
-        ctest --preset ${{ matrix.opengl == 'GL' && 'linux-ci' || 'linux-gles-ci' }}
-      env:
-        VCPKG_BINARY_SOURCES: "clear;files,${{ steps.vcpkg-cache.outputs.path }},readwrite"
-    - name: Run Benchmarks
-      run: ctest --preset ${{ matrix.opengl == 'GL' && 'linux-ci-benchmark' || 'linux-gles-ci-benchmark' }}
-
-
-  build_steam:
-    name: Steam
-    needs: changed
-    if: ${{ needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.integration_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true' || needs.changed.outputs.steam == 'true' }}
-    runs-on: ubuntu-latest
+  linux:
+    name: Ubuntu 22.04 GL
+    runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v5
         with:
           show-progress: false
-      - name: Build Endless Sky
+          fetch-depth: '10'
+      - name: Install development dependencies
         run: |
-          cd steam
-          docker compose run steam-x64
-      - name: Test Endless Sky
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxmu-dev libxi-dev libgl-dev libglu1-mesa-dev libgles2-mesa-dev libminizip-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libosmesa6 mesa-utils libglvnd-dev x11-utils catch2 libltdl-dev autoconf autoconf-archive automake libtool
+      - name: Disable VM sound card
         run: |
-          cd steam
-          docker compose run test-steam-x64
-
-
-  build_windows:
-    name: Windows
-    needs: changed
-    if: ${{ github.event_name == 'push' && (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true') }}
-    runs-on: windows-2025
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-    - uses: actions/checkout@v5
-      with:
-        show-progress: false
-        fetch-depth: '10'
-    - name: Find cache keys
-      run: |
-        echo 'RESTORE_KEYS<<EOF' > restore_keys.txt
-        git log --pretty=format:'${{ runner.os }}-ci-%H' -n 10 | tail -n+2 >> restore_keys.txt
-        echo -e '\nEOF' >> restore_keys.txt
-        cat restore_keys.txt >> "$GITHUB_ENV"
-        echo "CACHE_HASH=$(git log --no-merges --pretty=format:'%H' -n 1)" >> "$GITHUB_ENV"
-      shell: bash
-    - name: Setup ccache
-      uses: hendrikmuhs/ccache-action@v1
-      with:
-        key: ${{ runner.os }}-ci-${{ env.CACHE_HASH }}
-        restore-keys: ${{ env.RESTORE_KEYS }}
-        evict-old-files: '2d'
-        append-timestamp: 'false'
-    - name: Adjust version strings
-      run: ./utils/cd_update_versions.sh
-    - name: Setup vcpkg cache
-      uses: TAServers/vcpkg-cache@v3
-      id: vcpkg-cache
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-    - uses: lukka/get-cmake@v4.2.3
-    - uses: lukka/run-vcpkg@v11
-      with:
-        vcpkgGitCommitId: '89dc8be6dbcf18482a5a1bf86a2f4615c939b0fb'
-    - name: Run CMake
-      run: |
-        cmake --preset mingw-ci
-        cmake --build build --preset mingw-ci
-        ctest --preset mingw-ci
-      env:
-        VCPKG_BINARY_SOURCES: "clear;files,${{ steps.vcpkg-cache.outputs.path }},readwrite"
-    - name: Run Benchmarks
-      run: ctest --preset mingw-ci-benchmark
-    - name: Upload binary
-      uses: actions/upload-artifact@v4
-      with:
-        name: binary-windows
-        path: ./build/ci/Endless Sky.exe
-    - name: Upload DLLs
-      uses: actions/upload-artifact@v4
-      with:
-        name: windows-dlls
-        path: ./build/ci/*.dll
-
-
-  build_windows_32:
-    name: Windows (32-bit)
-    needs: changed
-    if: ${{ github.event_name == 'push' && (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true') }}
-    runs-on: windows-2025
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-    - uses: actions/checkout@v5
-      with:
-        show-progress: false
-        fetch-depth: '10'
-    - name: Add Mingw to PATH
-      run: |
-        echo (Join-Path C: mingw32 bin) >> $env:GITHUB_PATH
-    - name: Find cache keys
-      run: |
-        echo 'RESTORE_KEYS<<EOF' > restore_keys.txt
-        git log --pretty=format:'${{ runner.os }}32-ci-%H' -n 10 | tail -n+2 >> restore_keys.txt
-        echo -e '\nEOF' >> restore_keys.txt
-        cat restore_keys.txt >> "$GITHUB_ENV"
-        echo "CACHE_HASH=$(git log --no-merges --pretty=format:'%H' -n 1)" >> "$GITHUB_ENV"
-      shell: bash
-    - name: Setup ccache
-      uses: hendrikmuhs/ccache-action@v1
-      with:
-        key: ${{ runner.os }}32-ci-${{ env.CACHE_HASH }}
-        restore-keys: ${{ env.RESTORE_KEYS }}
-        evict-old-files: '2d'
-        append-timestamp: 'false'
-    - name: Adjust version strings
-      run: ./utils/cd_update_versions.sh
-    - name: Setup vcpkg cache
-      uses: TAServers/vcpkg-cache@v3
-      id: vcpkg-cache
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-    - uses: lukka/get-cmake@v4.2.3
-    - uses: lukka/run-vcpkg@v11
-      with:
-        vcpkgGitCommitId: '89dc8be6dbcf18482a5a1bf86a2f4615c939b0fb'
-    - name: Run CMake
-      run: |
-        cmake --preset mingw32-ci
-        cmake --build build --preset mingw32-ci
-        ctest --preset mingw32-ci
-      env:
-        VCPKG_BINARY_SOURCES: "clear;files,${{ steps.vcpkg-cache.outputs.path }},readwrite"
-    - name: Run Benchmarks
-      run: ctest --preset mingw32-ci-benchmark
-
-
-  build_windows_clang:
-    name: Windows Clang
-    needs: changed
-    if: ${{ github.event_name == 'push' && (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true') }}
-    runs-on: windows-2025
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-    - uses: actions/checkout@v5
-      with:
-        show-progress: false
-        fetch-depth: '10'
-    - name: Find cache keys
-      run: |
-        echo 'RESTORE_KEYS<<EOF' > restore_keys.txt
-        git log --pretty=format:'${{ runner.os }}-clang-ci-%H' -n 10 | tail -n+2 >> restore_keys.txt
-        echo -e '\nEOF' >> restore_keys.txt
-        cat restore_keys.txt >> "$GITHUB_ENV"
-        echo "CACHE_HASH=$(git log --no-merges --pretty=format:'%H' -n 1)" >> "$GITHUB_ENV"
-      shell: bash
-    - name: Setup ccache
-      uses: hendrikmuhs/ccache-action@v1
-      with:
-        key: ${{ runner.os }}-clang-ci-${{ env.CACHE_HASH }}
-        restore-keys: ${{ env.RESTORE_KEYS }}
-        evict-old-files: '2d'
-        append-timestamp: 'false'
-    - name: Adjust version strings
-      run: ./utils/cd_update_versions.sh
-    - name: Setup vcpkg cache
-      uses: TAServers/vcpkg-cache@v3
-      id: vcpkg-cache
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-    - uses: lukka/get-cmake@v4.2.3
-    - uses: lukka/run-vcpkg@v11
-      with:
-        vcpkgGitCommitId: '89dc8be6dbcf18482a5a1bf86a2f4615c939b0fb'
-    - name: Run CMake
-      run: |
-        cmake --preset clang-cl-ci
-        cmake --build build --preset clang-cl-ci
-        ctest --preset clang-cl-ci
-      env:
-        VCPKG_BINARY_SOURCES: "clear;files,${{ steps.vcpkg-cache.outputs.path }},readwrite"
-    - name: Run Benchmarks
-      run: ctest --preset clang-cl-ci-benchmark
-
-
-  build_macos:
-    name: MacOS
-    needs: changed
-    if: ${{ github.event_name == 'push' && (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true') }}
-    runs-on: macos-14
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-    - uses: actions/checkout@v5
-      with:
-        show-progress: false
-        fetch-depth: '10'
-    - name: Install pkg-config
-      run: type -P pkg-config || brew install pkg-config
-    - name: Find cache keys
-      run: |
-        echo 'RESTORE_KEYS<<EOF' > restore_keys.txt
-        git log --pretty=format:'${{ runner.os }}-ci-%H' -n 10 | tail -n+2 >> restore_keys.txt
-        echo -e '\nEOF' >> restore_keys.txt
-        cat restore_keys.txt >> "$GITHUB_ENV"
-        echo "CACHE_HASH=$(git log --no-merges --pretty=format:'%H' -n 1)" >> "$GITHUB_ENV"
-    - name: Setup ccache
-      uses: hendrikmuhs/ccache-action@v1
-      with:
-        key: ${{ runner.os }}-ci-${{ env.CACHE_HASH }}
-        restore-keys: ${{ env.RESTORE_KEYS }}
-        evict-old-files: '2d'
-        append-timestamp: 'false'
-    - name: Adjust version strings
-      run: ./utils/cd_update_versions.sh
-    - name: Setup vcpkg cache
-      uses: TAServers/vcpkg-cache@v3
-      id: vcpkg-cache
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-    - uses: lukka/get-cmake@v4.2.3
-    - uses: lukka/run-vcpkg@v11
-      with:
-        vcpkgGitCommitId: '89dc8be6dbcf18482a5a1bf86a2f4615c939b0fb'
-    - name: Run CMake
-      run: |
-        cmake --preset macos-ci
-        cmake --build build --preset macos-ci
-        ctest --preset macos-ci
-      env:
-        VCPKG_BINARY_SOURCES: "clear;files,${{ steps.vcpkg-cache.outputs.path }},readwrite"
-    - name: Run Benchmarks
-      run: ctest --preset macos-ci-benchmark
-
-
-  build_macos-arm:
-    name: MacOS-ARM
-    needs: changed
-    if: ${{ github.event_name == 'push' && (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true') }}
-    runs-on: macos-14
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      OUTPUT: "Endless Sky ARM CI Test"
-    steps:
-    - uses: actions/checkout@v5
-      with:
-        show-progress: false
-        fetch-depth: '10'
-    - name: Install pkg-config
-      run: type -P pkg-config || brew install pkg-config
-    - name: Find cache keys
-      run: |
-        echo 'RESTORE_KEYS<<EOF' > restore_keys.txt
-        git log --pretty=format:'${{ runner.os }}-arm-ci-%H' -n 10 | tail -n+2 >> restore_keys.txt
-        echo -e '\nEOF' >> restore_keys.txt
-        cat restore_keys.txt >> "$GITHUB_ENV"
-        echo "CACHE_HASH=$(git log --no-merges --pretty=format:'%H' -n 1)" >> "$GITHUB_ENV"
-    - name: Setup ccache
-      uses: hendrikmuhs/ccache-action@v1
-      with:
-        key: ${{ runner.os }}-arm-ci-${{ env.CACHE_HASH }}
-        restore-keys: ${{ env.RESTORE_KEYS }}
-        evict-old-files: '2d'
-        append-timestamp: 'false'
-    - name: Adjust version strings
-      run: ./utils/cd_update_versions.sh
-    - name: Setup vcpkg cache
-      uses: TAServers/vcpkg-cache@v3
-      id: vcpkg-cache
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-    - uses: lukka/get-cmake@v4.2.3
-    - uses: lukka/run-vcpkg@v11
-      with:
-        vcpkgGitCommitId: '89dc8be6dbcf18482a5a1bf86a2f4615c939b0fb'
-    - name: Run CMake
-      run: |
-        cmake --preset macos-arm-ci
-        cmake --build build --preset macos-arm-ci
-        ctest --preset macos-arm-ci
-      env:
-        VCPKG_BINARY_SOURCES: "clear;files,${{ steps.vcpkg-cache.outputs.path }},readwrite"
-    - name: Run Benchmarks
-      run: ctest --preset macos-arm-ci-benchmark
-
-
-  build_documentation_doxygen:
-    name: Documentation Doxygen
-    needs: changed
-    if: ${{ needs.changed.outputs.game_code == 'true' || needs.changed.outputs.unit_tests == 'true' || needs.changed.outputs.doxygen_config == 'true' || needs.changed.outputs.ci_config == 'true'}}
-    runs-on: ubuntu-24.04
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-    - uses: actions/checkout@v5
-      with:
-        show-progress: false
-    - name: Install development dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends doxygen graphviz clang
-    - name: Run Doxygen
-      run: doxygen
-
-
-  test-parse:
-    needs: [changed, build_windows]
-    name: Data Files
-    if: ${{ github.event_name == 'push' && (needs.changed.outputs.game_code == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.data == 'true' || needs.changed.outputs.integration_tests == 'true' || needs.changed.outputs.ci_config == 'true') && always() }}
-    runs-on: windows-2025
-    env:
-      CONTINUOUS: EndlessSky-win64-continuous.zip
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-    - uses: actions/checkout@v5
-      with:
-        show-progress: false
-    # If no code changes occurred then we can download the latest continuous.
-    - name: Download latest continuous
-      if: ${{ needs.changed.outputs.game_code != 'true' && needs.changed.outputs.cmake_files != 'true' && needs.changed.outputs.ci_config != 'true' }}
-      run: gh release download -R ${{ github.repository }} continuous -p ${{ env.CONTINUOUS }}
-    - name: Extract and prepare continuous
-      if: ${{ needs.changed.outputs.game_code != 'true' && needs.changed.outputs.cmake_files != 'true' && needs.changed.outputs.ci_config != 'true' }}
-      run: |
-        Expand-Archive ${{ env.CONTINUOUS }} -DestinationPath continuous -Force
-        COPY '.\continuous\Endless Sky.exe' .
-        COPY '.\continuous\*.dll' .
-    # Otherwise download the binary from CI.
-    - name: Download game binary from CI
-      if: ${{ needs.changed.outputs.game_code == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true' }}
-      uses: actions/download-artifact@v4
-      with:
-        name: binary-windows
-    - name: Download DLLs from CI
-      if: ${{ needs.changed.outputs.game_code == 'true' || needs.changed.outputs.cmake_files == 'true' || needs.changed.outputs.ci_config == 'true' }}
-      uses: actions/download-artifact@v4
-      with:
-        name: windows-dlls
-    - name: Parse Datafiles
-      run: "'./Endless Sky.exe' -p"
-      shell: bash
-    - name: Parse Integration Test Data
-      run: "'./Endless Sky.exe' -p --config 'tests/integration/config'"
-      shell: bash
-    - name: Parse All Resources
-      run: "'./Endless Sky.exe' --parse-assets"
-      shell: bash
+          sudo sh -c 'echo "pcm.!default { type plug slave.pcm \"null\" }"  >> /etc/asound.conf'
+      - name: Find cache keys
+        run: |
+          echo 'RESTORE_KEYS<<EOF' > restore_keys.txt
+          git log --pretty=format:'${{ runner.os }}-22.04-GL-ci-%H' -n 10 | tail -n+2 >> restore_keys.txt
+          echo -e '\nEOF' >> restore_keys.txt
+          cat restore_keys.txt >> "$GITHUB_ENV"
+          echo "CACHE_HASH=$(git log --no-merges --pretty=format:'%H' -n 1)" >> "$GITHUB_ENV"
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: ${{ runner.os }}-22.04-GL-ci-${{ env.CACHE_HASH }}
+          restore-keys: ${{ env.RESTORE_KEYS }}
+          evict-old-files: '2d'
+          append-timestamp: 'false'
+      - name: Adjust version strings
+        run: ./utils/cd_update_versions.sh
+      - name: Setup vcpkg cache
+        uses: TAServers/vcpkg-cache@v3
+        id: vcpkg-cache
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: lukka/get-cmake@v4.2.3
+      - uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '89dc8be6dbcf18482a5a1bf86a2f4615c939b0fb'
+      - name: Run CMake
+        run: |
+          cmake --preset linux-ci
+          cmake --build build --preset linux-ci
+          ctest --preset linux-ci
+        env:
+          VCPKG_BINARY_SOURCES: "clear;files,${{ steps.vcpkg-cache.outputs.path }},readwrite"
