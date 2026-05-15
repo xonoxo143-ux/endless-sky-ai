@@ -16,6 +16,7 @@ this program. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 class PlayerInfo;
 
@@ -23,13 +24,14 @@ class PlayerInfo;
 
 // Minimal AI Lab hook surface.
 //
-// v0.1 is intentionally read-only: it exports lightweight player/flagship
+// v0.2 is still intentionally read-only. It exports lightweight player/flagship
 // telemetry as JSON Lines when explicitly enabled from the command line.
 class AiHooks {
 public:
 	struct Options {
 		bool telemetry = false;
 		int telemetryEvery = 60;
+		std::string telemetryFile;
 	};
 
 public:
