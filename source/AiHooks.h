@@ -38,4 +38,5 @@ public:
 	static void Configure(const Options &options);
 	static bool TelemetryEnabled();
 	static void EmitTelemetry(const PlayerInfo &player, std::uint64_t tick);
+	static void EmitSelfTest();
 };
