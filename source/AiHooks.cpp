@@ -20,9 +20,14 @@ this program. If not, see <https://www.gnu.org/licenses/>.
 #include "Ship.h"
 #include "System.h"
 
+#include <algorithm>
+#include <charconv>
+#include <cctype>
 #include <cstdlib>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <string>
 
@@ -31,10 +36,181 @@ using namespace std;
 namespace {
 	AiHooks::Options options;
 	unique_ptr<ofstream> telemetryFile;
+	bool haveLastCommandText = false;
+	string lastCommandText;
+	bool haveLastProcessedSeq = false;
+	int64_t lastProcessedSeq = 0;
+	bool missingCommandFileReported = false;
+
+	enum class FieldStatus {
+		MISSING,
+		VALUE,
+		INVALID
+	};
+
+	struct StringField {
+		FieldStatus status = FieldStatus::MISSING;
+		string value;
+	};
+
+	struct IntegerField {
+		FieldStatus status = FieldStatus::MISSING;
+		int64_t value = 0;
+	};
 
 	ostream &TelemetryOutput()
 	{
 		return telemetryFile ? *telemetryFile : cout;
+	}
+
+	bool EnvFlagEnabled(const char *value)
+	{
+		if(!value || !*value)
+			return false;
+
+		string normalized = value;
+		transform(normalized.begin(), normalized.end(), normalized.begin(),
+			[](unsigned char ch) { return static_cast<char>(tolower(ch)); });
+		return normalized != "0" && normalized != "false" && normalized != "no" && normalized != "off";
+	}
+
+	string Trim(const string &text)
+	{
+		auto first = find_if_not(text.begin(), text.end(),
+			[](unsigned char ch) { return isspace(ch); });
+		auto last = find_if_not(text.rbegin(), text.rend(),
+			[](unsigned char ch) { return isspace(ch); }).base();
+		if(first >= last)
+			return "";
+		return string(first, last);
+	}
+
+	void SkipWhitespace(const string &text, size_t &position)
+	{
+		while(position < text.size() && isspace(static_cast<unsigned char>(text[position])))
+			++position;
+	}
+
+	bool FindFieldValue(const string &text, const string &name, size_t &position)
+	{
+		const string quotedName = '"' + name + '"';
+		position = text.find(quotedName);
+		if(position == string::npos)
+			return false;
+
+		position += quotedName.size();
+		SkipWhitespace(text, position);
+		if(position >= text.size() || text[position] != ':')
+		{
+			position = string::npos;
+			return true;
+		}
+		++position;
+		SkipWhitespace(text, position);
+		return true;
+	}
+
+	bool IsHex(char ch)
+	{
+		return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+	}
+
+	bool HasValueTerminator(const string &text, size_t position)
+	{
+		SkipWhitespace(text, position);
+		return position >= text.size() || text[position] == ',' || text[position] == '}';
+	}
+
+	StringField ExtractStringField(const string &text, const string &name)
+	{
+		size_t position = 0;
+		if(!FindFieldValue(text, name, position))
+			return {};
+		if(position == string::npos || position >= text.size() || text[position] != '"')
+			return {FieldStatus::INVALID, {}};
+
+		++position;
+		string value;
+		while(position < text.size())
+		{
+			const char ch = text[position++];
+			if(ch == '"')
+			{
+				if(!HasValueTerminator(text, position))
+					return {FieldStatus::INVALID, {}};
+				return {FieldStatus::VALUE, value};
+			}
+			if(ch == '\\')
+			{
+				if(position >= text.size())
+					return {FieldStatus::INVALID, {}};
+				const char escaped = text[position++];
+				switch(escaped)
+				{
+					case '"':
+					case '\\':
+					case '/':
+						value += escaped;
+						break;
+					case 'b':
+						value += '\b';
+						break;
+					case 'f':
+						value += '\f';
+						break;
+					case 'n':
+						value += '\n';
+						break;
+					case 'r':
+						value += '\r';
+						break;
+					case 't':
+						value += '\t';
+						break;
+					case 'u':
+						if(position + 4 > text.size() || !all_of(text.begin() + position, text.begin() + position + 4, IsHex))
+							return {FieldStatus::INVALID, {}};
+						position += 4;
+						value += '?';
+						break;
+					default:
+						return {FieldStatus::INVALID, {}};
+				}
+			}
+			else
+			{
+				if(static_cast<unsigned char>(ch) < 0x20)
+					return {FieldStatus::INVALID, {}};
+				value += ch;
+			}
+		}
+
+		return {FieldStatus::INVALID, {}};
+	}
+
+	IntegerField ExtractIntegerField(const string &text, const string &name)
+	{
+		size_t position = 0;
+		if(!FindFieldValue(text, name, position))
+			return {};
+		if(position == string::npos || position >= text.size())
+			return {FieldStatus::INVALID, 0};
+
+		size_t end = position;
+		if(text[end] == '-')
+			++end;
+		while(end < text.size() && isdigit(static_cast<unsigned char>(text[end])))
+			++end;
+		if(end == position || (text[position] == '-' && end == position + 1))
+			return {FieldStatus::INVALID, 0};
+
+		int64_t value = 0;
+		const auto result = from_chars(text.data() + position, text.data() + end, value);
+		if(result.ec != errc() || result.ptr != text.data() + end)
+			return {FieldStatus::INVALID, 0};
+		if(!HasValueTerminator(text, end))
+			return {FieldStatus::INVALID, 0};
+		return {FieldStatus::VALUE, value};
 	}
 
 	string JsonEscape(const string &value)
@@ -101,6 +277,9 @@ void AiHooks::Configure(const Options &newOptions)
 	if(options.telemetryEvery < 1)
 		options.telemetryEvery = 1;
 
+	if(!options.control && EnvFlagEnabled(getenv("ES_AI_CONTROL")))
+		options.control = true;
+
 	if(options.telemetryFile.empty())
 	{
 		const char *envTelemetryFile = getenv("ES_AI_TELEMETRY_FILE");
@@ -108,8 +287,21 @@ void AiHooks::Configure(const Options &newOptions)
 			options.telemetryFile = envTelemetryFile;
 	}
 
+	if(options.commandFile.empty())
+	{
+		const char *envCommandFile = getenv("ES_AI_COMMAND_FILE");
+		if(envCommandFile)
+			options.commandFile = envCommandFile;
+	}
+
 	telemetryFile.reset();
-	if(options.telemetry && !options.telemetryFile.empty())
+	haveLastCommandText = false;
+	lastCommandText.clear();
+	haveLastProcessedSeq = false;
+	lastProcessedSeq = 0;
+	missingCommandFileReported = false;
+
+	if((options.telemetry || options.control) && !options.telemetryFile.empty())
 	{
 		telemetryFile = make_unique<ofstream>(options.telemetryFile, ios::out | ios::trunc);
 		if(!*telemetryFile)
@@ -125,6 +317,156 @@ void AiHooks::Configure(const Options &newOptions)
 bool AiHooks::TelemetryEnabled()
 {
 	return options.telemetry;
+}
+
+
+
+bool AiHooks::ControlEnabled()
+{
+	return options.control;
+}
+
+
+
+AiHooks::CommandResult AiHooks::ParseCommandText(const string &text)
+{
+	CommandResult result;
+	const string trimmed = Trim(text);
+	if(trimmed.size() < 2 || trimmed.front() != '{' || trimmed.back() != '}')
+	{
+		result.reason = "invalid_json";
+		return result;
+	}
+
+	const StringField type = ExtractStringField(trimmed, "type");
+	if(type.status == FieldStatus::INVALID)
+	{
+		result.reason = "invalid_json";
+		return result;
+	}
+	if(type.status != FieldStatus::VALUE || type.value != "ai_command")
+	{
+		result.reason = "invalid_type";
+		return result;
+	}
+
+	const IntegerField seq = ExtractIntegerField(trimmed, "seq");
+	if(seq.status == FieldStatus::INVALID)
+	{
+		result.reason = "invalid_json";
+		return result;
+	}
+	if(seq.status != FieldStatus::VALUE || seq.value < 0)
+	{
+		result.reason = "missing_seq";
+		return result;
+	}
+	result.hasSeq = true;
+	result.seq = seq.value;
+
+	const StringField action = ExtractStringField(trimmed, "action");
+	if(action.status == FieldStatus::INVALID)
+	{
+		result.reason = "invalid_json";
+		return result;
+	}
+	if(action.status != FieldStatus::VALUE || action.value.empty())
+	{
+		result.reason = "missing_action";
+		return result;
+	}
+	result.hasAction = true;
+	result.action = action.value;
+
+	if(result.action == "noop")
+		result.accepted = true;
+	else
+		result.reason = "action_not_implemented";
+
+	return result;
+}
+
+
+
+void AiHooks::EmitCommandResult(const CommandResult &result)
+{
+	ostream &out = TelemetryOutput();
+	out << "{\"type\":\"ai_command_result\",";
+	out << "\"telemetry_version\":1,";
+	out << "\"seq\":";
+	if(result.hasSeq)
+		out << result.seq;
+	else
+		out << "null";
+	out << ',';
+	out << "\"accepted\":" << (result.accepted ? "true" : "false") << ',';
+	out << "\"action\":";
+	if(result.hasAction)
+		out << '"' << JsonEscape(result.action) << '"';
+	else
+		out << "null";
+	out << ',';
+	out << "\"reason\":";
+	if(result.reason.empty())
+		out << "null";
+	else
+		out << '"' << JsonEscape(result.reason) << '"';
+	out << "}" << endl;
+	out.flush();
+}
+
+
+
+void AiHooks::PollCommand(const PlayerInfo &, uint64_t)
+{
+	if(!options.control)
+		return;
+
+	if(options.commandFile.empty())
+	{
+		if(!missingCommandFileReported)
+		{
+			CommandResult result;
+			result.reason = "missing_command_file";
+			EmitCommandResult(result);
+			missingCommandFileReported = true;
+		}
+		return;
+	}
+
+	ifstream input(options.commandFile);
+	if(!input)
+	{
+		if(!missingCommandFileReported)
+		{
+			CommandResult result;
+			result.reason = "missing_command_file";
+			EmitCommandResult(result);
+			missingCommandFileReported = true;
+		}
+		return;
+	}
+	missingCommandFileReported = false;
+
+	const string text{istreambuf_iterator<char>(input), istreambuf_iterator<char>()};
+	if(haveLastCommandText && text == lastCommandText)
+		return;
+	haveLastCommandText = true;
+	lastCommandText = text;
+
+	CommandResult result = ParseCommandText(text);
+	if(result.hasSeq && haveLastProcessedSeq && result.seq <= lastProcessedSeq)
+	{
+		result.accepted = false;
+		result.reason = "duplicate_or_old_seq";
+	}
+	if(result.hasSeq && (!haveLastProcessedSeq || result.seq > lastProcessedSeq))
+	{
+		haveLastProcessedSeq = true;
+		lastProcessedSeq = result.seq;
+	}
+
+	EmitCommandResult(result);
 }
 
 
