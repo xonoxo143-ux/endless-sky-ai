@@ -25,8 +25,8 @@ class PlayerInfo;
 
 // Minimal AI Lab hook surface.
 //
-// v0.4 keeps game control opt-in and limited to duration-bounded movement
-// commands that are routed through the existing player input command path.
+// v0.5 keeps game control opt-in and limited to duration-bounded movement
+// commands, with enough telemetry to drive a tiny external closed-loop pilot.
 class AiHooks {
 public:
 	struct Options {
@@ -56,7 +56,7 @@ public:
 	static void Configure(const Options &options);
 	static bool TelemetryEnabled();
 	static bool ControlEnabled();
-	static void EmitTelemetry(const PlayerInfo &player, std::uint64_t tick);
+	static void EmitTelemetry(const PlayerInfo &player, std::uint64_t tick, bool inFlight = false);
 	static void EmitSelfTest();
 	static CommandResult ParseCommandText(const std::string &text);
 	static void PollCommand(const PlayerInfo &player, std::uint64_t tick, bool inFlight = false);

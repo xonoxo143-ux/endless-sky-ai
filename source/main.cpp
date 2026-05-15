@@ -454,11 +454,11 @@ void GameLoop(PlayerInfo &player, TaskQueue &queue, const Conversation &conversa
 			if(AiHooks::TelemetryEnabled() || AiHooks::ControlEnabled())
 			{
 				++aiHookTick;
+				const bool aiInFlight = menuPanels.IsEmpty() && !gamePanels.IsEmpty()
+					&& gamePanels.Root() == gamePanels.Top() && player.IsLoaded()
+					&& player.Flagship() && !player.GetPlanet();
 				if(AiHooks::ControlEnabled())
 				{
-					const bool aiInFlight = menuPanels.IsEmpty() && !gamePanels.IsEmpty()
-						&& gamePanels.Root() == gamePanels.Top() && player.IsLoaded()
-						&& player.Flagship() && !player.GetPlanet();
 					AiHooks::PollCommand(player, aiHookTick, aiInFlight);
 					Command aiCommand = AiHooks::CommandForFrame(aiHookTick, aiInFlight);
 					if(aiCommand)
@@ -469,7 +469,7 @@ void GameLoop(PlayerInfo &player, TaskQueue &queue, const Conversation &conversa
 					}
 				}
 				if(AiHooks::TelemetryEnabled())
-					AiHooks::EmitTelemetry(player, aiHookTick);
+					AiHooks::EmitTelemetry(player, aiHookTick, aiInFlight);
 			}
 
 			// Caps lock slows the frame rate in debug mode.

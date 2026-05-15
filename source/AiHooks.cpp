@@ -608,7 +608,7 @@ Command AiHooks::CommandForFrame(uint64_t tick, bool inFlight)
 
 
 
-void AiHooks::EmitTelemetry(const PlayerInfo &player, uint64_t tick)
+void AiHooks::EmitTelemetry(const PlayerInfo &player, uint64_t tick, bool inFlight)
 {
 	if(!options.telemetry || tick % static_cast<uint64_t>(options.telemetryEvery))
 		return;
@@ -625,6 +625,7 @@ void AiHooks::EmitTelemetry(const PlayerInfo &player, uint64_t tick)
 	out << "\"has_pilot\":" << (player.IsLoaded() ? "true" : "false") << ',';
 	out << "\"has_flagship\":" << (flagship ? "true" : "false") << ',';
 	WriteStringField(out, "phase", phase);
+	out << "\"in_flight\":" << (inFlight ? "true" : "false") << ',';
 	WriteStringField(out, "player_first", player.FirstName());
 	WriteStringField(out, "player_last", player.LastName());
 

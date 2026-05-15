@@ -202,6 +202,40 @@ SCENARIO("AI command results are written as one JSON object per line", "[aihooks
 
 
 
+SCENARIO("AI telemetry reports the movement command flight gate", "[aihooks]")
+{
+	const filesystem::path commandPath = "aihooks-command-telemetry.json";
+	const filesystem::path resultPath = "aihooks-telemetry-control.jsonl";
+	filesystem::remove(commandPath);
+	filesystem::remove(resultPath);
+	WriteFile(commandPath, "{\"type\":\"ai_command\",\"seq\":1,\"action\":\"turn_left\",\"duration\":2}");
+
+	AiHooks::Options options;
+	options.telemetry = true;
+	options.telemetryEvery = 1;
+	options.control = true;
+	options.commandFile = commandPath.string();
+	options.telemetryFile = resultPath.string();
+	AiHooks::Configure(options);
+
+	PlayerInfo player;
+	AiHooks::PollCommand(player, 5, true);
+	AiHooks::EmitTelemetry(player, 5, true);
+
+	const string output = ReadFile(resultPath);
+	CHECK(output.find("\"type\":\"ai_telemetry\"") != string::npos);
+	CHECK(output.find("\"in_flight\":true") != string::npos);
+	CHECK(output.find("\"ai_control\":{\"seq\":1") != string::npos);
+	CHECK(output.find("\"action\":\"turn_left\"") != string::npos);
+	CHECK(output.find("\"remaining\":2") != string::npos);
+
+	AiHooks::Configure({});
+	filesystem::remove(commandPath);
+	filesystem::remove(resultPath);
+}
+
+
+
 SCENARIO("AI command polling rejects movement commands outside flight", "[aihooks]")
 {
 	const filesystem::path commandPath = "aihooks-command-not-flight.json";
