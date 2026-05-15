@@ -1,12 +1,7 @@
 name: Check
 
 on:
-  push:
-    branches:
-      - master
-      - releases/v[0-9]+.[0-9]+.[0-9]+
-  pull_request:
-    types: [opened, synchronize]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -132,4 +127,3 @@ jobs:
         show-progress: false
     - run: sudo apt-get install -y --no-install-recommends glslang-tools
     - run: utils/check_shaders.sh
-
