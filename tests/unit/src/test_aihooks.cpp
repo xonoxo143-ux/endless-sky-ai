@@ -16,6 +16,7 @@ this program. If not, see <https://www.gnu.org/licenses/>.
 #include "es-test.hpp"
 
 #include "../../../source/AiHooks.h"
+#include "../../../source/Command.h"
 #include "../../../source/PlayerInfo.h"
 
 #include <algorithm>
@@ -109,16 +110,56 @@ SCENARIO("AI command parser rejects commands without an action", "[aihooks]")
 
 
 
-SCENARIO("AI command parser rejects unimplemented actions", "[aihooks]")
+SCENARIO("AI command parser accepts duration-limited movement commands", "[aihooks]")
 {
 	const AiHooks::CommandResult result =
 		AiHooks::ParseCommandText("{\"type\":\"ai_command\",\"seq\":2,\"action\":\"thrust\",\"duration\":60}");
+
+	CHECK(result.accepted);
+	CHECK(result.hasSeq);
+	CHECK(result.seq == 2);
+	CHECK(result.hasAction);
+	CHECK(result.action == "thrust");
+	CHECK(result.hasDuration);
+	CHECK(result.duration == 60);
+	CHECK(result.reason.empty());
+}
+
+
+
+SCENARIO("AI command parser rejects movement commands without a valid duration", "[aihooks]")
+{
+	const AiHooks::CommandResult missing =
+		AiHooks::ParseCommandText("{\"type\":\"ai_command\",\"seq\":2,\"action\":\"thrust\"}");
+
+	CHECK_FALSE(missing.accepted);
+	CHECK(missing.hasSeq);
+	CHECK(missing.hasAction);
+	CHECK(missing.action == "thrust");
+	CHECK_FALSE(missing.hasDuration);
+	CHECK(missing.reason == "missing_duration");
+
+	const AiHooks::CommandResult invalid =
+		AiHooks::ParseCommandText("{\"type\":\"ai_command\",\"seq\":3,\"action\":\"turn_left\",\"duration\":0}");
+
+	CHECK_FALSE(invalid.accepted);
+	CHECK(invalid.hasDuration);
+	CHECK(invalid.duration == 0);
+	CHECK(invalid.reason == "invalid_duration");
+}
+
+
+
+SCENARIO("AI command parser rejects unimplemented actions", "[aihooks]")
+{
+	const AiHooks::CommandResult result =
+		AiHooks::ParseCommandText("{\"type\":\"ai_command\",\"seq\":2,\"action\":\"fire_primary\",\"duration\":60}");
 
 	CHECK_FALSE(result.accepted);
 	CHECK(result.hasSeq);
 	CHECK(result.seq == 2);
 	CHECK(result.hasAction);
-	CHECK(result.action == "thrust");
+	CHECK(result.action == "fire_primary");
 	CHECK(result.reason == "action_not_implemented");
 }
 
@@ -148,12 +189,121 @@ SCENARIO("AI command results are written as one JSON object per line", "[aihooks
 	CHECK(output.find("\"seq\":2") != string::npos);
 	CHECK(output.find("\"accepted\":false") != string::npos);
 	CHECK(output.find("\"action\":\"thrust\"") != string::npos);
+	CHECK(output.find("\"duration\":null") != string::npos);
+	CHECK(output.find("\"tick\":null") != string::npos);
+	CHECK(output.find("\"active_until\":null") != string::npos);
 	CHECK(output.find("\"reason\":\"action_not_implemented\"") != string::npos);
 	CHECK(count(output.begin(), output.end(), '\n') == 1);
 	CHECK(output.ends_with("}\n"));
 
 	AiHooks::Configure({});
 	filesystem::remove(path);
+}
+
+
+
+SCENARIO("AI telemetry reports the movement command flight gate", "[aihooks]")
+{
+	const filesystem::path commandPath = "aihooks-command-telemetry.json";
+	const filesystem::path resultPath = "aihooks-telemetry-control.jsonl";
+	filesystem::remove(commandPath);
+	filesystem::remove(resultPath);
+	WriteFile(commandPath, "{\"type\":\"ai_command\",\"seq\":1,\"action\":\"turn_left\",\"duration\":2}");
+
+	AiHooks::Options options;
+	options.telemetry = true;
+	options.telemetryEvery = 1;
+	options.control = true;
+	options.commandFile = commandPath.string();
+	options.telemetryFile = resultPath.string();
+	AiHooks::Configure(options);
+
+	PlayerInfo player;
+	AiHooks::PollCommand(player, 5, true);
+	AiHooks::EmitTelemetry(player, 5, true);
+
+	const string output = ReadFile(resultPath);
+	CHECK(output.find("\"type\":\"ai_telemetry\"") != string::npos);
+	CHECK(output.find("\"in_flight\":true") != string::npos);
+	CHECK(output.find("\"ai_control\":{\"seq\":1") != string::npos);
+	CHECK(output.find("\"action\":\"turn_left\"") != string::npos);
+	CHECK(output.find("\"remaining\":2") != string::npos);
+
+	AiHooks::Configure({});
+	filesystem::remove(commandPath);
+	filesystem::remove(resultPath);
+}
+
+
+
+SCENARIO("AI command polling rejects movement commands outside flight", "[aihooks]")
+{
+	const filesystem::path commandPath = "aihooks-command-not-flight.json";
+	const filesystem::path resultPath = "aihooks-command-not-flight.jsonl";
+	filesystem::remove(commandPath);
+	filesystem::remove(resultPath);
+	WriteFile(commandPath, "{\"type\":\"ai_command\",\"seq\":1,\"action\":\"thrust\",\"duration\":2}");
+
+	AiHooks::Options options;
+	options.control = true;
+	options.commandFile = commandPath.string();
+	options.telemetryFile = resultPath.string();
+	AiHooks::Configure(options);
+
+	PlayerInfo player;
+	AiHooks::PollCommand(player, 10, false);
+	Command command = AiHooks::CommandForFrame(10, false);
+
+	const string output = ReadFile(resultPath);
+	CHECK_FALSE(command);
+	CHECK(output.find("\"seq\":1") != string::npos);
+	CHECK(output.find("\"accepted\":false") != string::npos);
+	CHECK(output.find("\"action\":\"thrust\"") != string::npos);
+	CHECK(output.find("\"duration\":2") != string::npos);
+	CHECK(output.find("\"tick\":10") != string::npos);
+	CHECK(output.find("\"reason\":\"not_in_flight\"") != string::npos);
+
+	AiHooks::Configure({});
+	filesystem::remove(commandPath);
+	filesystem::remove(resultPath);
+}
+
+
+
+SCENARIO("AI movement commands are active only for their requested duration", "[aihooks]")
+{
+	const filesystem::path commandPath = "aihooks-command-move.json";
+	const filesystem::path resultPath = "aihooks-command-move.jsonl";
+	filesystem::remove(commandPath);
+	filesystem::remove(resultPath);
+	WriteFile(commandPath, "{\"type\":\"ai_command\",\"seq\":1,\"action\":\"turn_right\",\"duration\":2}");
+
+	AiHooks::Options options;
+	options.control = true;
+	options.commandFile = commandPath.string();
+	options.telemetryFile = resultPath.string();
+	AiHooks::Configure(options);
+
+	PlayerInfo player;
+	AiHooks::PollCommand(player, 20, true);
+
+	Command first = AiHooks::CommandForFrame(20, true);
+	Command second = AiHooks::CommandForFrame(21, true);
+	Command expired = AiHooks::CommandForFrame(22, true);
+
+	const string output = ReadFile(resultPath);
+	CHECK(first.Has(Command::RIGHT));
+	CHECK(second.Has(Command::RIGHT));
+	CHECK_FALSE(expired);
+	CHECK(output.find("\"accepted\":true") != string::npos);
+	CHECK(output.find("\"duration\":2") != string::npos);
+	CHECK(output.find("\"tick\":20") != string::npos);
+	CHECK(output.find("\"active_until\":21") != string::npos);
+	CHECK(output.find("\"reason\":null") != string::npos);
+
+	AiHooks::Configure({});
+	filesystem::remove(commandPath);
+	filesystem::remove(resultPath);
 }
 
 
