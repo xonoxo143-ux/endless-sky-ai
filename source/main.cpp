@@ -16,6 +16,7 @@ this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "audio/Audio.h"
+#include "AiHooks.h"
 #include "Command.h"
 #include "Conversation.h"
 #include "CustomEvents.h"
@@ -55,6 +56,8 @@ this program. If not, see <https://www.gnu.org/licenses/>.
 #endif
 
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <map>
 
@@ -108,6 +111,7 @@ int main(int argc, char *argv[])
 	bool printTests = false;
 	bool printData = false;
 	bool noTestMute = false;
+	AiHooks::Options aiHookOptions;
 	string testToRunName;
 
 	// Whether the game has encountered errors while loading.
@@ -146,7 +150,16 @@ int main(int argc, char *argv[])
 			printTests = true;
 		else if(arg == "--nomute")
 			noTestMute = true;
+		else if(arg == "--ai-telemetry")
+			aiHookOptions.telemetry = true;
+		else if(arg == "--ai-telemetry-every" && *++it)
+		{
+			aiHookOptions.telemetryEvery = atoi(*it);
+			if(aiHookOptions.telemetryEvery < 1)
+				aiHookOptions.telemetryEvery = 1;
+		}
 	}
+	AiHooks::Configure(aiHookOptions);
 	printData = PrintData::IsPrintDataArgument(argv);
 	Files::Init(argv);
 
@@ -400,6 +413,7 @@ void GameLoop(PlayerInfo &player, TaskQueue &queue, const Conversation &conversa
 		bool isPerformanceDisplayReady = false;
 		int step = 0;
 		int drawStep = 0;
+		uint64_t aiHookTick = 0;
 
 		while(!menuPanels.IsDone())
 		{
@@ -434,6 +448,9 @@ void GameLoop(PlayerInfo &player, TaskQueue &queue, const Conversation &conversa
 
 			// Tell all the panels to step forward, then draw them.
 			((!isDebugPaused && menuPanels.IsEmpty()) ? gamePanels : menuPanels).StepAll();
+
+			if(AiHooks::TelemetryEnabled())
+				AiHooks::EmitTelemetry(player, ++aiHookTick);
 
 			// Caps lock slows the frame rate in debug mode.
 			// Slowing eases in and out over a couple of frames.
@@ -625,6 +642,8 @@ void PrintHelp()
 	cerr << "    --tests: print table of available tests, then exit." << endl;
 	cerr << "    --test <name>: run given test from resources directory." << endl;
 	cerr << "    --nomute: don't mute the game while running tests." << endl;
+	cerr << "    --ai-telemetry: print AI Lab telemetry as JSON Lines to stdout." << endl;
+	cerr << "    --ai-telemetry-every <frames>: telemetry frame interval, default 60." << endl;
 	PrintData::Help();
 	cerr << endl;
 	cerr << "Report bugs to: <https://github.com/endless-sky/endless-sky/issues>" << endl;

@@ -75,6 +75,7 @@ jobs:
 
   cd_windows_x64:
     name: Windows
+    if: github.event_name == 'push'
     runs-on: windows-2025
     env:
       OUTPUT: EndlessSky-win64-continuous.zip
@@ -129,6 +130,7 @@ jobs:
 
   cd_macos_x64:
     name: MacOS
+    if: github.event_name == 'push'
     runs-on: macos-14
     env:
       OUTPUT: EndlessSky-macOS-continuous.zip
