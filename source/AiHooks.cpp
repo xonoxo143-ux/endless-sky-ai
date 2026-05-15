@@ -20,13 +20,21 @@ this program. If not, see <https://www.gnu.org/licenses/>.
 #include "Ship.h"
 #include "System.h"
 
+#include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 
 using namespace std;
 
 namespace {
 	AiHooks::Options options;
+	unique_ptr<ofstream> telemetryFile;
+
+	ostream &TelemetryOutput()
+	{
+		return telemetryFile ? *telemetryFile : cout;
+	}
 
 	string JsonEscape(const string &value)
 	{
@@ -91,6 +99,17 @@ void AiHooks::Configure(const Options &newOptions)
 	options = newOptions;
 	if(options.telemetryEvery < 1)
 		options.telemetryEvery = 1;
+
+	telemetryFile.reset();
+	if(options.telemetry && !options.telemetryFile.empty())
+	{
+		telemetryFile = make_unique<ofstream>(options.telemetryFile, ios::out | ios::trunc);
+		if(!*telemetryFile)
+		{
+			cerr << "Unable to open AI telemetry file: " << options.telemetryFile << endl;
+			telemetryFile.reset();
+		}
+	}
 }
 
 
@@ -110,43 +129,50 @@ void AiHooks::EmitTelemetry(const PlayerInfo &player, uint64_t tick)
 	const Ship *flagship = player.Flagship();
 	const System *system = player.GetSystem();
 	const Planet *planet = player.GetPlanet();
+	const string phase = !player.IsLoaded() ? "menu" : (planet ? "landed" : "flight");
+	ostream &out = TelemetryOutput();
 
-	cout << "{\"type\":\"ai_telemetry\",";
-	cout << "\"tick\":" << tick << ',';
-	WriteStringField(cout, "player_first", player.FirstName());
-	WriteStringField(cout, "player_last", player.LastName());
+	out << "{\"type\":\"ai_telemetry\",";
+	out << "\"telemetry_version\":1,";
+	out << "\"tick\":" << tick << ',';
+	out << "\"has_pilot\":" << (player.IsLoaded() ? "true" : "false") << ',';
+	out << "\"has_flagship\":" << (flagship ? "true" : "false") << ',';
+	WriteStringField(out, "phase", phase);
+	WriteStringField(out, "player_first", player.FirstName());
+	WriteStringField(out, "player_last", player.LastName());
 
 	const string *systemName = system ? &system->TrueName() : nullptr;
 	const string *planetName = planet ? &planet->TrueName() : nullptr;
-	WriteNullableNameField(cout, "system", systemName);
-	WriteNullableNameField(cout, "planet", planetName);
-	cout << "\"landed\":" << (planet ? "true" : "false") << ',';
+	WriteNullableNameField(out, "system", systemName);
+	WriteNullableNameField(out, "planet", planetName);
+	out << "\"landed\":" << (planet ? "true" : "false") << ',';
 
-	cout << "\"credits\":" << player.Accounts().Credits() << ',';
-	cout << "\"ship_count\":" << player.Ships().size() << ',';
+	out << "\"credits\":" << player.Accounts().Credits() << ',';
+	out << "\"ship_count\":" << player.Ships().size() << ',';
 
-	cout << "\"flagship\":";
+	out << "\"flagship\":";
 	if(flagship)
 	{
 		const auto &position = flagship->Position();
 		const auto &velocity = flagship->Velocity();
-		cout << '{';
-		WriteStringField(cout, "name", flagship->GivenName());
-		WriteStringField(cout, "model", flagship->DisplayModelName());
-		cout << "\"position\":{\"x\":" << position.X() << ",\"y\":" << position.Y() << "},";
-		cout << "\"velocity\":{\"x\":" << velocity.X() << ",\"y\":" << velocity.Y() << "},";
-		cout << "\"angle\":" << flagship->Facing().Degrees() << ',';
-		cout << "\"speed\":" << flagship->CurrentSpeed() << ',';
-		cout << "\"shields\":" << flagship->Shields() << ',';
-		cout << "\"hull\":" << flagship->Hull() << ',';
-		cout << "\"fuel\":" << flagship->Fuel() << ',';
-		cout << "\"energy\":" << flagship->Energy() << ',';
-		cout << "\"disabled\":" << (flagship->IsDisabled() ? "true" : "false") << ',';
-		cout << "\"destroyed\":" << (flagship->IsDestroyed() ? "true" : "false");
-		cout << '}';
+		out << '{';
+		WriteStringField(out, "name", flagship->GivenName());
+		WriteStringField(out, "model", flagship->DisplayModelName());
+		out << "\"position\":{\"x\":" << position.X() << ",\"y\":" << position.Y() << "},";
+		out << "\"velocity\":{\"x\":" << velocity.X() << ",\"y\":" << velocity.Y() << "},";
+		out << "\"angle\":" << flagship->Facing().Degrees() << ',';
+		out << "\"speed\":" << flagship->CurrentSpeed() << ',';
+		out << "\"shields\":" << flagship->Shields() << ',';
+		out << "\"hull\":" << flagship->Hull() << ',';
+		out << "\"fuel\":" << flagship->Fuel() << ',';
+		out << "\"energy\":" << flagship->Energy() << ',';
+		out << "\"disabled\":" << (flagship->IsDisabled() ? "true" : "false") << ',';
+		out << "\"destroyed\":" << (flagship->IsDestroyed() ? "true" : "false");
+		out << '}';
 	}
 	else
-		cout << "null";
+		out << "null";
 
-	cout << "}" << endl;
+	out << "}" << endl;
+	out.flush();
 }
