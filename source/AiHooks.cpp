@@ -15,6 +15,7 @@ this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "AiHooks.h"
 
+#include "Command.h"
 #include "Planet.h"
 #include "PlayerInfo.h"
 #include "Ship.h"
@@ -34,6 +35,8 @@ this program. If not, see <https://www.gnu.org/licenses/>.
 using namespace std;
 
 namespace {
+	constexpr int64_t MAX_MOVEMENT_DURATION = 300;
+
 	AiHooks::Options options;
 	unique_ptr<ofstream> telemetryFile;
 	bool haveLastCommandText = false;
@@ -41,6 +44,16 @@ namespace {
 	bool haveLastProcessedSeq = false;
 	int64_t lastProcessedSeq = 0;
 	bool missingCommandFileReported = false;
+
+	struct ActiveMovement {
+		bool active = false;
+		int64_t seq = 0;
+		string action;
+		uint64_t activeUntil = 0;
+		Command command;
+	};
+
+	ActiveMovement activeMovement;
 
 	enum class FieldStatus {
 		MISSING,
@@ -267,6 +280,46 @@ namespace {
 		if(comma)
 			out << ',';
 	}
+
+	bool IsMovementAction(const string &action)
+	{
+		return action == "thrust" || action == "turn_left" || action == "turn_right" || action == "brake";
+	}
+
+	Command MovementCommandForAction(const string &action)
+	{
+		Command command;
+		if(action == "thrust")
+			command |= Command::FORWARD;
+		else if(action == "turn_left")
+			command |= Command::LEFT;
+		else if(action == "turn_right")
+			command |= Command::RIGHT;
+		else if(action == "brake")
+			command |= Command::BACK;
+		return command;
+	}
+
+	void ClearActiveMovement()
+	{
+		activeMovement = {};
+	}
+
+	void WriteActiveCommandTelemetry(ostream &out, uint64_t tick)
+	{
+		out << "\"ai_control\":";
+		if(activeMovement.active && tick <= activeMovement.activeUntil)
+		{
+			out << '{';
+			out << "\"seq\":" << activeMovement.seq << ',';
+			WriteStringField(out, "action", activeMovement.action);
+			out << "\"active_until\":" << activeMovement.activeUntil << ',';
+			out << "\"remaining\":" << (activeMovement.activeUntil - tick + 1);
+			out << '}';
+		}
+		else
+			out << "null";
+	}
 }
 
 
@@ -300,6 +353,7 @@ void AiHooks::Configure(const Options &newOptions)
 	haveLastProcessedSeq = false;
 	lastProcessedSeq = 0;
 	missingCommandFileReported = false;
+	ClearActiveMovement();
 
 	if((options.telemetry || options.control) && !options.telemetryFile.empty())
 	{
@@ -378,8 +432,31 @@ AiHooks::CommandResult AiHooks::ParseCommandText(const string &text)
 	result.hasAction = true;
 	result.action = action.value;
 
+	const IntegerField duration = ExtractIntegerField(trimmed, "duration");
+	if(duration.status == FieldStatus::INVALID)
+	{
+		result.reason = "invalid_json";
+		return result;
+	}
+	if(duration.status == FieldStatus::VALUE)
+	{
+		result.hasDuration = true;
+		result.duration = duration.value;
+	}
+
 	if(result.action == "noop")
 		result.accepted = true;
+	else if(result.action == "stop_control")
+		result.accepted = true;
+	else if(IsMovementAction(result.action))
+	{
+		if(!result.hasDuration)
+			result.reason = "missing_duration";
+		else if(result.duration < 1 || result.duration > MAX_MOVEMENT_DURATION)
+			result.reason = "invalid_duration";
+		else
+			result.accepted = true;
+	}
 	else
 		result.reason = "action_not_implemented";
 
@@ -406,6 +483,24 @@ void AiHooks::EmitCommandResult(const CommandResult &result)
 	else
 		out << "null";
 	out << ',';
+	out << "\"duration\":";
+	if(result.hasDuration)
+		out << result.duration;
+	else
+		out << "null";
+	out << ',';
+	out << "\"tick\":";
+	if(result.hasTick)
+		out << result.tick;
+	else
+		out << "null";
+	out << ',';
+	out << "\"active_until\":";
+	if(result.hasActiveUntil)
+		out << result.activeUntil;
+	else
+		out << "null";
+	out << ',';
 	out << "\"reason\":";
 	if(result.reason.empty())
 		out << "null";
@@ -417,7 +512,7 @@ void AiHooks::EmitCommandResult(const CommandResult &result)
 
 
 
-void AiHooks::PollCommand(const PlayerInfo &, uint64_t)
+void AiHooks::PollCommand(const PlayerInfo &, uint64_t tick, bool inFlight)
 {
 	if(!options.control)
 		return;
@@ -455,6 +550,8 @@ void AiHooks::PollCommand(const PlayerInfo &, uint64_t)
 	lastCommandText = text;
 
 	CommandResult result = ParseCommandText(text);
+	result.hasTick = true;
+	result.tick = tick;
 	if(result.hasSeq && haveLastProcessedSeq && result.seq <= lastProcessedSeq)
 	{
 		result.accepted = false;
@@ -466,7 +563,47 @@ void AiHooks::PollCommand(const PlayerInfo &, uint64_t)
 		lastProcessedSeq = result.seq;
 	}
 
+	if(result.accepted && result.hasAction)
+	{
+		if(result.action == "stop_control")
+			ClearActiveMovement();
+		else if(IsMovementAction(result.action))
+		{
+			if(!inFlight)
+			{
+				result.accepted = false;
+				result.reason = "not_in_flight";
+			}
+			else
+			{
+				activeMovement.active = true;
+				activeMovement.seq = result.seq;
+				activeMovement.action = result.action;
+				activeMovement.activeUntil = tick + static_cast<uint64_t>(result.duration) - 1;
+				activeMovement.command = MovementCommandForAction(result.action);
+				result.hasActiveUntil = true;
+				result.activeUntil = activeMovement.activeUntil;
+			}
+		}
+	}
+
 	EmitCommandResult(result);
+}
+
+
+
+Command AiHooks::CommandForFrame(uint64_t tick, bool inFlight)
+{
+	if(!options.control || !activeMovement.active)
+		return {};
+
+	if(!inFlight || tick > activeMovement.activeUntil)
+	{
+		ClearActiveMovement();
+		return {};
+	}
+
+	return activeMovement.command;
 }
 
 
@@ -522,6 +659,9 @@ void AiHooks::EmitTelemetry(const PlayerInfo &player, uint64_t tick)
 	}
 	else
 		out << "null";
+
+	out << ',';
+	WriteActiveCommandTelemetry(out, tick);
 
 	out << "}" << endl;
 	out.flush();

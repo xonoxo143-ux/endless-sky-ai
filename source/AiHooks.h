@@ -18,14 +18,15 @@ this program. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <string>
 
+class Command;
 class PlayerInfo;
 
 
 
 // Minimal AI Lab hook surface.
 //
-// v0.3 keeps game control inert by default. Telemetry remains read-only, and
-// the control bridge only parses command files and reports validation results.
+// v0.4 keeps game control opt-in and limited to duration-bounded movement
+// commands that are routed through the existing player input command path.
 class AiHooks {
 public:
 	struct Options {
@@ -42,6 +43,12 @@ public:
 		bool accepted = false;
 		bool hasAction = false;
 		std::string action;
+		bool hasDuration = false;
+		std::int64_t duration = 0;
+		bool hasTick = false;
+		std::uint64_t tick = 0;
+		bool hasActiveUntil = false;
+		std::uint64_t activeUntil = 0;
 		std::string reason;
 	};
 
@@ -52,6 +59,7 @@ public:
 	static void EmitTelemetry(const PlayerInfo &player, std::uint64_t tick);
 	static void EmitSelfTest();
 	static CommandResult ParseCommandText(const std::string &text);
-	static void PollCommand(const PlayerInfo &player, std::uint64_t tick);
+	static void PollCommand(const PlayerInfo &player, std::uint64_t tick, bool inFlight = false);
+	static Command CommandForFrame(std::uint64_t tick, bool inFlight);
 	static void EmitCommandResult(const CommandResult &result);
 };
