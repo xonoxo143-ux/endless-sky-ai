@@ -40,8 +40,11 @@ public:
 		bool hasSeq = false;
 		std::int64_t seq = 0;
 		bool accepted = false;
-		bool hasAction = false;
-		std::string action;
+		bool applied = false;
+		bool hasScope = false;
+		std::string scope;
+		bool hasCommand = false;
+		std::string command;
 		std::string reason;
 	};
 
