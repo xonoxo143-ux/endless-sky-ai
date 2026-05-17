@@ -267,6 +267,14 @@ namespace {
 		if(comma)
 			out << ',';
 	}
+
+	bool IsRecognizedCommand(const string &scope, const string &command)
+	{
+		return (scope == "system" && command == "noop")
+			|| (scope == "menu" && command == "new_pilot")
+			|| (scope == "landed" && command == "launch")
+			|| (scope == "flight" && command == "control");
+	}
 }
 
 
@@ -364,25 +372,45 @@ AiHooks::CommandResult AiHooks::ParseCommandText(const string &text)
 	result.hasSeq = true;
 	result.seq = seq.value;
 
-	const StringField action = ExtractStringField(trimmed, "action");
-	if(action.status == FieldStatus::INVALID)
+	const StringField scope = ExtractStringField(trimmed, "scope");
+	if(scope.status == FieldStatus::INVALID)
 	{
 		result.reason = "invalid_json";
 		return result;
 	}
-	if(action.status != FieldStatus::VALUE || action.value.empty())
+	if(scope.status != FieldStatus::VALUE || scope.value.empty())
 	{
-		result.reason = "missing_action";
+		result.reason = "missing_scope";
 		return result;
 	}
-	result.hasAction = true;
-	result.action = action.value;
+	result.hasScope = true;
+	result.scope = scope.value;
 
-	if(result.action == "noop")
-		result.accepted = true;
+	const StringField command = ExtractStringField(trimmed, "command");
+	if(command.status == FieldStatus::INVALID)
+	{
+		result.reason = "invalid_json";
+		return result;
+	}
+	if(command.status != FieldStatus::VALUE || command.value.empty())
+	{
+		result.reason = "missing_command";
+		return result;
+	}
+	result.hasCommand = true;
+	result.command = command.value;
+
+	if(!IsRecognizedCommand(result.scope, result.command))
+	{
+		result.reason = "command_not_supported";
+		return result;
+	}
+
+	result.accepted = true;
+	if(result.scope == "system" && result.command == "noop")
+		result.applied = true;
 	else
-		result.reason = "action_not_implemented";
-
+		result.reason = "not_applied_yet";
 	return result;
 }
 
@@ -400,9 +428,16 @@ void AiHooks::EmitCommandResult(const CommandResult &result)
 		out << "null";
 	out << ',';
 	out << "\"accepted\":" << (result.accepted ? "true" : "false") << ',';
-	out << "\"action\":";
-	if(result.hasAction)
-		out << '"' << JsonEscape(result.action) << '"';
+	out << "\"applied\":" << (result.applied ? "true" : "false") << ',';
+	out << "\"scope\":";
+	if(result.hasScope)
+		out << '"' << JsonEscape(result.scope) << '"';
+	else
+		out << "null";
+	out << ',';
+	out << "\"command\":";
+	if(result.hasCommand)
+		out << '"' << JsonEscape(result.command) << '"';
 	else
 		out << "null";
 	out << ',';
@@ -458,6 +493,7 @@ void AiHooks::PollCommand(const PlayerInfo &, uint64_t)
 	if(result.hasSeq && haveLastProcessedSeq && result.seq <= lastProcessedSeq)
 	{
 		result.accepted = false;
+		result.applied = false;
 		result.reason = "duplicate_or_old_seq";
 	}
 	if(result.hasSeq && (!haveLastProcessedSeq || result.seq > lastProcessedSeq))
